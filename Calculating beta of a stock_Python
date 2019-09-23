@@ -1,0 +1,24 @@
+#Calculating beta or systemic risk
+#Step1: importing libraries
+import numpy as np
+import pandas as pd
+from pandas_datareader import data as wb
+
+#Step2: Sourcing data from yahoo finance; using pandas and pandas_datareader libraries to form tabular data and read data respectively
+tickers = ['MSFT', '^GSPC']
+data = pd.DataFrame()
+for t in tickers:
+    data[t] = wb.DataReader(t, data_source='yahoo', start='2012-1-1')['Adj Close']  
+
+#Step3: Calculating log returns by calling numpy library
+sec_returns = np.log( data / data.shift(1) )
+
+#Step4: Calculating covariance between the returns of Microsoft and S&P500
+cov = sec_returns.cov() * 250
+cov_with_market = cov.iloc[0,1]
+
+#Step5: Calculating the variance of the returns of S&P500 
+market_var = sec_returns['^GSPC'].var() * 250
+
+#Step6: Calculating the beta of Microsoft
+MSFT_beta = cov_with_market / market_var
