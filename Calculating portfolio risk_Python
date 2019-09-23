@@ -1,4 +1,4 @@
-#Calculating security risk
+#Calculating portfolio risk
 #Step1: importing libraries
 import numpy as np
 import pandas as pd
