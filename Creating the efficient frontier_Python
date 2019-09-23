@@ -1,0 +1,56 @@
+#Creating the efficient frontier
+#Step1: importing libraries
+import numpy as np
+import pandas as pd
+from pandas_datareader import data as wb
+import matplotlib.pyplot as plt
+
+#Step2: Sourcing data from yahoo finance; using pandas and pandas_datareader libraries to form tabular data and read data respectively
+assets = ['PG', '^GSPC']
+pf_data = pd.DataFrame()
+for a in assets:
+    pf_data[a] = wb.DataReader(a, data_source = 'yahoo', start = '2010-1-1')['Adj Close']
+
+#Step3: Calculating log returns by calling numpy library
+log_returns = np.log(pf_data / pf_data.shift(1))
+
+#Step4: Calculating the annual log returns of the assets 
+log_returns.mean() * 250
+
+#Step5: Calculating the annual covariance of the assets 
+log_returns.cov() * 250
+
+#Step6: Calculating the correlation between the two assets
+log_returns.corr()
+
+#Step7: Allocating weights
+num_assets = len(assets) #returns the number of assets in the portfolio
+weights = np.random.random(num_assets) #assigns random numbers between 0 and 1 in this case
+weights /= np.sum(weights) #makes sure that the sum of the random numbers is 1
+
+weights[0] + weights[1] #should return 1
+
+#Step8: Calculating the annualised weighted portfolio mean
+np.sum(weights * log_returns.mean()) * 250
+
+#Step9: Calculating the annualised weighted portfolio volatility
+np.sqrt(np.dot(weights.T,np.dot(log_returns.cov() * 250, weights)))
+
+#Step10: Generating the efficient frontier using 1000 different weights
+pfolio_returns = []
+pfolio_volatilities = []
+
+for x in range (1000):
+    weights = np.random.random(num_assets)
+    weights /= np.sum(weights) 
+    pfolio_returns.append(np.sum(weights * log_returns.mean()) * 250)  #appends different annual log returns for different weights to the matrix pfolio_returns 
+    pfolio_volatilities.append(np.sqrt(np.dot(weights.T,np.dot(log_returns.cov() * 250, weights)))) #appends different annual mean volatility for different weights to the matrix pfolio_volatilities
+
+pfolio_returns, pfolio_volatilities #will generate values in continuous array 
+
+portfolios = pd.DataFrame({'Return': pfolio_returns, 'Volatility': pfolio_volatilities}) #allows to organize data in tabular form
+
+#Step11: Graphing the frontier 
+portfolios.plot(x='Volatility', y='Return', kind='scatter', figsize=(10, 6));
+plt.xlabel('Expected Volatility')
+plt.ylabel('Expected Return')
