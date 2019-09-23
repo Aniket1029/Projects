@@ -1,0 +1,22 @@
+#Calculating security risk
+#Step1: importing libraries
+import numpy as np
+import pandas as pd
+from pandas_datareader import data as wb
+import matplotlib.pyplot as plt
+
+#Step2: Sourcing data from yahoo finance; using pandas and pandas_datareader libraries to form tabular data and read data respectively 
+tickers = ['MSFT', 'AAPL']
+data = pd.DataFrame()
+for t in tickers:
+    data[t] = wb.DataReader(t, data_source='yahoo', start='2000-1-1')['Adj Close']
+
+#Step3: Calculating log returns by calling numpy library
+returns = np.log(data / data.shift(1))
+
+#Step4: Calculating security risk or standard deviation of Apple and Microsoft
+returns['MSFT'].std() * 250 ** 0.5
+returns['AAPL'].std() * 250 ** 0.5
+
+
+
