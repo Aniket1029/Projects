@@ -1,0 +1,39 @@
+#Calculating security risk
+#Step1: importing libraries
+import numpy as np
+import pandas as pd
+from pandas_datareader import data as wb
+import matplotlib.pyplot as plt
+
+#Step2: Sourcing data from yahoo finance; using pandas and pandas_datareader libraries to form tabular data and read data respectively 
+tickers = ['MSFT', 'AAPL']
+sec_data = pd.DataFrame()
+for t in tickers:
+    sec_data[t] = wb.DataReader(t, data_source='yahoo', start='2007-1-1')['Adj Close']
+
+#Step3: Calculating log returns by calling numpy library
+sec_returns = np.log(sec_data / sec_data.shift(1))
+
+#Step4: Calculating annual mean return of Apple and Microsoft
+sec_returns['MSFT'].mean() * 250
+sec_returns['AAPL'].mean() * 250
+
+#Step5: Calculating security risk or standard deviation of Apple and Microsoft
+sec_returns['MSFT'].std() * 250 ** 0.5
+sec_returns['AAPL'].std() * 250 ** 0.5
+
+#Step6: Calculating covariance matrix (without the weight factor)
+cov_matrix_a = sec_returns.cov() * 250
+
+#Step6: Calculating correlation 
+corr_matrix = sec_returns.corr()
+
+#Step7: Deciding the weights of the two securities in the portfolio
+weights = np.array([0.5, 0.5])
+
+#Step8: Calculating portfolio risk
+pfolio_vol = (np.dot(weights.T, np.dot(sec_returns.cov() * 250, weights))) ** 0.5
+
+#Step9: Printing the value in percentage
+print str(round(pfolio_vol, 5) * 100) + ' %'
+
