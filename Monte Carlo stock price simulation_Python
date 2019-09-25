@@ -5,7 +5,7 @@ import pandas as pd
 from pandas_datareader import data as wb  
 import matplotlib.pyplot as plt  
 from scipy.stats import norm
-%matplotlib inline
+
 
 #Step2: Sourcing data from yahoo finance; using pandas and pandas_datareader libraries to form tabular data and read data respectively
 ticker = 'MSFT' 
