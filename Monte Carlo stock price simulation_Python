@@ -47,10 +47,10 @@ S0 = data.iloc[-1]
 price_list = np.zeros_like(daily_returns)
 price_list[0] = S0
 
-Step12: Creating a for loop to fill the price_list. It will contain a 1000*10 matrix
+#Step12: Creating a for loop to fill the price_list. It will contain a 1000*10 matrix
 for t in xrange(1, t_intervals):
     price_list[t] = price_list[t - 1] * daily_returns[t]
 
-Step13: Graphing the iterations
+#Step13: Graphing the iterations
 plt.figure(figsize=(10,6))
 plt.plot(price_list);
