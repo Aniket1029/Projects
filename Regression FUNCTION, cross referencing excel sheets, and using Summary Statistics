@@ -1,0 +1,109 @@
+#a: Converting prices
+
+#I have changed the data in excel to a table format for better access during cross referencing
+#Assume a "prices" excel sheet carrying prices of 470 French stocks, 4 index prices, and a column of 3month treasury price
+#Assume an "asset" excel sheet carrying the details of each asset in the prices sheet, such as their ticker, code, sector etc
+
+prices<-as.matrix(read.csv(file="file_name.csv",sep = ",",dec = "."
+                           , check.names=FALSE,quote = "",row.names=c(1),header=TRUE))
+assets<-read.table(file="file_name1.csv",sep = ",",dec = "."
+                   ,quote = "",header=TRUE, stringsAsFactors=FALSE, na.strings="")
+
+#Verifying the data in two different sheets
+identical(colnames(prices),assets$MNEMONIC)
+
+#Accessing data of assets sheet
+equity<-!is.na(assets$LOCAL.INDEX)|!is.na(assets$LOC.OFF..CODE) #Choosing assets other than indices and treasury
+cac40<-assets$MNEMONIC=="FRCAC40"
+vix<-assets$MNEMONIC=="VSTOXXI"
+riskfree<- assets$MNEMONIC=="TRBD3MT"
+USEUR<- assets$MNEMONIC=="USEURSP"
+USS<-assets$MNEMONIC=="USSMRECPR"
+NOTna<-!(apply(apply(prices,2,is.na),2,any))
+
+#Cross referencing assets and prices sheet to make a dynamic selection of data from prices sheet, instead of selecting columns
+equityp<-prices[,equitya]
+CACp<-prices[,cac40]
+VSTO_prices<-prices[,vix]
+USEURSP_prices<-prices[,USEUR]
+USSMRECPR_prices<-prices[,USS]
+TR<-prices[2:nrow(prices),riskfree]/100
+
+retlog_equity<-as.matrix(log(prices[-1,NOTna&equity]/prices[-nrow(prices),NOTna&equity]))
+retlog_CAC<-as.matrix(log(prices[-1,cac40]/prices[-nrow(prices),cac40]))
+
+retexc_equity<-retlog_equity-TR
+retexc_CAC<-retlog_CAC-TR
+
+#b: runing regression for excess returns
+#excess returns of every stock - dependent y-variable
+#excess returns of CAC40 - independent x-variable
+fregquick<-function(y,x){
+  out<-list() 
+  x<-as.matrix(x)
+  y<-as.matrix(y)
+  
+  # adjusting for NAs 
+  skip2<-is.na(y)
+  skip<-apply(skip2,2,any)
+  y<-y[,!skip]
+  N<-length(x)
+
+  # regression pieces
+  b1hat<-solve(t(x)%*%x)%*%(t(x)%*%y)
+  b0hat<-apply(y,2,mean)-b1hat*mean(x)
+  b0hat_expand<-t(matrix(rep(b0hat,times=N),ncol=N))
+  yhat<-x%*%b1hat+b0hat_expand
+  e<-as.matrix(y-yhat)
+  rsqr<-1-diag(t(e)%*%e)/((N-1)*apply(y,2,var))
+  
+  # compile outputs 
+  out$beta0<-t(b0hat)
+  out$beta1<-t(b1hat)
+  out$rsqr<-as.matrix(rsqr,ncol=1)
+  
+  out
+}
+
+#Regression of CAC40 index and equities
+results_b<-fregquick(retexc_equity,retexc_CAC)
+
+#Sample regression during different periods of USSMRECPR prices
+windows(5,5)
+plot(USSMRECPR_prices)
+
+#high - assumption 1: taking high as median price
+USSMRECPR_high<-as.matrix(USSMRECPR_prices[2:length(USSMRECPR_prices)]>0.18)
+retexc_equity_d<-retexc_equity[USSMRECPR_high,]
+retexc_CAC_d<-retexc_CAC[USSMRECPR_high,]
+results_d<-fregquick(retexc_equity_d,retexc_CAC_d)
+
+#high - assumption 2 - approximate average of index price 
+USSMRECPR_high1<-as.matrix(USSMRECPR_prices[2:length(USSMRECPR_prices)]>10)
+retexc_equity_e<-retexc_equity[USSMRECPR_high1,]
+retexc_CAC_e<-retexc_CAC[USSMRECPR_high1,]
+results_e<-fregquick(retexc_equity_e,retexc_CAC_e)
+
+#high - assumption 3 - approximate index price during market crisis
+USSMRECPR_high2<-as.matrix(USSMRECPR_prices[2:length(USSMRECPR_prices)]>40)
+retexc_equity_f<-retexc_equity[USSMRECPR_high2,]
+retexc_CAC_f<-retexc_CAC[USSMRECPR_high2,]
+results_f<-fregquick(retexc_equity_f,retexc_CAC_f)
+
+#e: summary statistics 
+stats_b<-lapply(results_b,fsumstats)
+stats_c<-lapply(results_c,fsumstats)
+
+stats_d<-lapply(results_d,fsumstats)
+stats_e<-lapply(results_e,fsumstats)
+stats_f<-lapply(results_f,fsumstats)
+
+#Summary stats of beta1 in d
+b1d<-stats_d$beta1
+b1e<-stats_e$beta1
+b1f<-stats_f$beta1
+b1summ<-cbind(b1d,b1e,b1f)
+
+#Beta1 of an average stocks keeps increasing as the markets become more volatile, while kurtosis moves close to 5 and skewness close to zero
+#Hence, it proves the presence of fatter tails, stronger peaks and faster decays during market crisis
+
