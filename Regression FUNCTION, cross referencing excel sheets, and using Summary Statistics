@@ -1,4 +1,4 @@
-#a: Converting prices
+#Loading data and Converting prices
 
 #I have changed the data in excel to a table format for better access during cross referencing
 #Assume a "prices" excel sheet carrying prices of 470 French stocks, 4 index prices, and a column of 3month treasury price
@@ -35,7 +35,7 @@ retlog_CAC<-as.matrix(log(prices[-1,cac40]/prices[-nrow(prices),cac40]))
 retexc_equity<-retlog_equity-TR
 retexc_CAC<-retlog_CAC-TR
 
-#b: runing regression for excess returns
+#Runing regression for excess returns
 #excess returns of every stock - dependent y-variable
 #excess returns of CAC40 - independent x-variable
 fregquick<-function(y,x){
@@ -43,13 +43,13 @@ fregquick<-function(y,x){
   x<-as.matrix(x)
   y<-as.matrix(y)
   
-  # adjusting for NAs 
+  #adjusting for NAs 
   skip2<-is.na(y)
   skip<-apply(skip2,2,any)
   y<-y[,!skip]
   N<-length(x)
 
-  # regression pieces
+  #regression pieces
   b1hat<-solve(t(x)%*%x)%*%(t(x)%*%y)
   b0hat<-apply(y,2,mean)-b1hat*mean(x)
   b0hat_expand<-t(matrix(rep(b0hat,times=N),ncol=N))
@@ -57,7 +57,7 @@ fregquick<-function(y,x){
   e<-as.matrix(y-yhat)
   rsqr<-1-diag(t(e)%*%e)/((N-1)*apply(y,2,var))
   
-  # compile outputs 
+  #compile outputs 
   out$beta0<-t(b0hat)
   out$beta1<-t(b1hat)
   out$rsqr<-as.matrix(rsqr,ncol=1)
@@ -90,7 +90,7 @@ retexc_equity_f<-retexc_equity[USSMRECPR_high2,]
 retexc_CAC_f<-retexc_CAC[USSMRECPR_high2,]
 results_f<-fregquick(retexc_equity_f,retexc_CAC_f)
 
-#e: summary statistics 
+#Summary statistics 
 stats_b<-lapply(results_b,fsumstats)
 stats_c<-lapply(results_c,fsumstats)
 
