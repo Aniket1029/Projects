@@ -1,0 +1,44 @@
+fmoment<-function(x, i , dfadj=0) { 
+  x<-x[!is.na(x)]
+  n<-length(x)
+  out<- sum(  (x-mean(x))^i )/( n-dfadj) 
+  
+  sigma<- sqrt( sum( (x-mean(x))^2 )/n)
+  out <- out/sigma^i 
+  out 
+}
+
+fsumstats<-function(x,k=0){
+  x<-as.matrix(x) ; T<-apply(!is.na(x),2,sum) ; out<-T
+  out<-rbind(out,apply(x,2,mean,na.rm=TRUE),sqrt(apply(x,2,var,na.rm=TRUE)))
+  out<-rbind(out,apply(x,2,fmoment,i=3), apply(x,2,fmoment,i=4))
+  out<-rbind(out,T/6*out[4,]^2+T/24*(out[5,]-3)^2 )
+  pskew<-pnorm(out[4,],0,sqrt(6/T))
+  pkurt<- pnorm(out[5,],3,sqrt(24/T))
+  pjb<- pchisq(out[6,],2)
+  
+#minimum,maximum and quantiles
+  Qminimum<-apply(x,2,min,na.rm=TRUE)
+  Q.025<-apply(x,2,quantile,probs=0.025,na.rm=TRUE)
+  Q.5<-apply(x,2,quantile,probs=0.5,na.rm=TRUE)
+  Q.975<-apply(x,2,quantile,probs=0.975,na.rm=TRUE)
+  Qmaximum<-apply(x,2,max,na.rm=TRUE)
+  out<-rbind(out,pskew,pkurt,pjb,Qminimum,Q.025,Q.5,Q.975,Qmaximum)
+  
+#Autocorrelation estimates
+  cov<-0
+  for (t in 1:(nrow(x)-k)){
+    cov<-cov+(x[t,]-apply(x,2,mean,na.rm=TRUE))*(x[t+k]-apply(x,2,mean,na.rm=TRUE))
+  }
+  autoc<-cov/(nrow(x)-k)
+  autoce<-autoc/apply(x,2,var,na.rm=TRUE)
+  
+#P-values for autocorrelation estimates
+  pauto<-pnorm(autoce*sqrt(T),0,1)
+  out<-rbind(out,autoc,autoce,pauto)
+  rownames(out)<-c("N","Mean","sd","Skew","Kurtosis","JarqBera"
+                   ,"Pvalskew","Pvalkurt","PvalJB"
+                   ,"Minimum","2.5%Quantile","50%Quantile","97.5%Quantile","Maximum"
+                   ,"Auto-covariance","Auto-correlation coefficients","p-value for auto-correlation")
+  out
+}
