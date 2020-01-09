@@ -1,7 +1,5 @@
 """SHOULD BE RUN ON QUANTOPIAN-ALGORITHM"""
 
-"""Part 1"""
-
 """Approach: We want to use a dividend strategy along with 100/200 day price sma constraint to trade 
 long positions in stocks in the S&P 500 or Q500US universe, with a minimum market cap of $25bn.
 We use the free cash flow and price sma constraints to short stocks. Furthermore, we also want 
