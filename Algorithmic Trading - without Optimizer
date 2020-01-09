@@ -1,0 +1,123 @@
+"""SHOULD BE RUN ON QUANTOPIAN-ALGORITHM"""
+
+"""Part 1"""
+
+"""Approach: We want to use a dividend strategy along with 100/200 day price sma constraint to trade 
+long positions in stocks in the S&P 500 or Q500US universe, with a minimum market cap of $25bn.
+We use the free cash flow and price sma constraints to short stocks. Furthermore, we also want 
+dynamic and customized rebalancing strategies for the portfolio."      
+"""
+import quantopian.algorithm as algo
+from quantopian.pipeline.data.builtin import USEquityPricing
+from quantopian.pipeline.filters import QTradableStocksUS
+from quantopian.pipeline import Pipeline, CustomFactor, filters
+from quantopian.pipeline.factors import SimpleMovingAverage, AverageDollarVolume
+from quantopian.pipeline.data.morningstar import Fundamentals
+from quantopian.pipeline.domain import US_EQUITIES
+from quantopian.pipeline.filters import StaticAssets, Q500US
+import pandas as pd
+import quantopian.pipeline.factors as Factors
+
+def initialize(context):
+    """
+    Called once at the start of the algorithm.
+    
+    """
+    # Rebalance every day, 1 hour after market open.
+    algo.schedule_function(
+        rebalance,
+        algo.date_rules.every_day(),
+        algo.time_rules.market_open(hours=1),
+    )
+
+    # Record tracking variables at the end of each day.
+    algo.schedule_function(
+        record_vars,
+        algo.date_rules.every_day(),
+        algo.time_rules.market_close(),
+    )
+
+    # Create our dynamic stock selector.
+    algo.attach_pipeline(pipe_definition(context), 'pipeline')
+
+
+def pipe_definition(context): 
+    div_y = Fundamentals.trailing_dividend_yield.latest
+    f_c_f = Fundamentals.free_cash_flow.latest
+    universe = (Q500US(minimum_market_cap=40000000000) & div_y.notnull() & f_c_f.notnull()) #25bn minimum market cap constraint to increase the liquidity of stocks and also the possibility of dividend payments
+    sma_5 = Factors.SimpleMovingAverage(inputs=[USEquityPricing.close], window_length=5, mask=universe)
+    sma_50 = Factors.SimpleMovingAverage(inputs=[USEquityPricing.close], window_length=50, mask=universe)
+    sma_200 = Factors.SimpleMovingAverage(inputs=[USEquityPricing.close], window_length=200, mask=universe)
+    sma_200 = Factors.SimpleMovingAverage(inputs=[Fundamentals.trailing_dividend_yield], window_length=200, mask=universe)   
+    close_price = USEquityPricing.close.latest 
+    
+    return Pipeline(
+            columns = {
+            'Price' : close_price, 'PSma5': sma_5,'PSma50': sma_50,
+            'Psma200': sma_200,'divy' : div_y,
+            'Dsma200' : sma_200,
+            'fcf' : f_c_f
+            },
+            screen = universe,
+            )
+def before_trading_start(context, data):
+    """
+    Called every day before market open.
+    """
+    context.output = algo.pipeline_output('pipeline')
+
+    #These are the securities that we are interested in trading each day.
+    context.security_list = context.output.index
+
+def rebalance(context, data):
+    #Rules to buy, sell and cover at different scenarios
+    open_rules = 'divy > Dsma200 & Price > 1.05*Psma200 & Price > PSma50 & Price > PSma5'
+    sell_rules_p = 'divy < Dsma200 & Price > 1.12*Psma200 & Price < PSma5'
+    sell_rules_n = 'divy > Dsma200 & Price*1.03 < Psma200 & Price*1.01 < PSma50'
+    short_rules = 'fcf < 0 & Price * 1.05 < Psma200 & Price *1.03 < PSma50 & Price *1.03 < PSma5'
+    cover_rules_n = 'Price > 1.01 * Psma200 & Price > 1.01*PSma50 & Price > 1.01*PSma5 ' 
+    cover_rules_p = 'Price * 1.15 < Psma200 & Price < PSma50' 
+    #These rules can be further modified using other fundamentals and technicals as added constraints.
+    
+    #Weight according to the number of stocks in each category. Not very dynamic
+    long_weight = 0.9/len(open_rules)
+    short_weight = -0.1/len(short_rules)
+    
+    #Coverts stocks filtered according to the above criteria to list
+    open_these = context.output.query(open_rules).index.tolist()
+    sell_these_p = context.output.query(sell_rules_p).index.tolist()
+    sell_these_n = context.output.query(sell_rules_n).index.tolist()
+    short_these = context.output.query(short_rules).index.tolist()
+    cover_these_n = context.output.query(cover_rules_n).index.tolist()
+    cover_these_p = context.output.query(cover_rules_p).index.tolist()
+    #Our strategy doesn't contain any leverage or sectoral constraints
+    #Strategy for "Entry and Exit" or "Buy and sell" according to the rules defined above
+    
+    #We long the stock if it qualifies for the set constraints above for long positions and if the stock is not in the portfolio
+    for stock in open_these:
+        if stock not in context.portfolio.positions and data.can_trade(stock):
+            order_target_percent(stock, long_weight)
+    
+    #If a certain stock in the portfolio is making a profit, we sell the stock according to the set constraints above 
+    for stock in sell_these_p:
+        if stock in context.portfolio.positions and data.can_trade(stock):
+            order_target_percent(stock, 0)
+    #If a certain stock in the portfolio is losing money, we sell the stock according to the set constraints above 
+    for stock in sell_these_n:
+        if stock in context.portfolio.positions and data.can_trade(stock):
+            order_target_percent(stock, 0)
+    #We short and cover according to the short_these and cover_these rules above
+    for stock in short_these:
+        if stock not in context.portfolio.positions and data.can_trade(stock):    
+            order_target_percent(stock, short_weight) 
+        if stock in context.portfolio.positions and data.can_trade(stock):
+            if stock in cover_these_n or cover_these_p:
+                order_target_percent(stock, 0) 
+    #These rebalancing strategies can be further modified using market microstructure techniques as constraints to rebalance
+
+"""This strategy works well in long time periods, especially between 2011 and 2019, and takes care of the volatility and drawdowns more efficiently when
+the universe is filtered for stocks with minimum of USD40bn market cap"""
+
+def record_vars(context, data):
+     record(leverage=context.account.leverage,
+           positions=len(context.portfolio.positions))
