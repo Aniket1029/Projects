@@ -1,0 +1,106 @@
+"""SHOULD BE RUN ON QUANTOPIAN-ALGORITHM"""
+
+"""Model used: 3 Factor - Sentiment Signal + Growth score + EV to EBITDA"""
+
+import quantopian.algorithm as algo
+import quantopian.optimize as opt
+from quantopian.pipeline.data.sentdex import sentiment
+from quantopian.pipeline.classifiers.morningstar import Sector
+from quantopian.pipeline import Pipeline
+from quantopian.pipeline.factors import SimpleMovingAverage
+from quantopian.pipeline.data.morningstar import Fundamentals
+from quantopian.pipeline.filters import StaticAssets, Q500US, Q1500US
+import pandas as pd
+import quantopian.pipeline.factors as Factors
+
+gross_leverage_max = 1.0
+min_weight = 0.001 #0.1%  
+max_weight = 0.02  #1%
+
+"""Date in Quantopian : 01/01/2018 - 01/01/2019 ; Amount: 10,000,000"""
+
+
+def initialize(context):
+    """
+    Called once at the start of the algorithm.
+    
+    """
+    # Rebalance every day, 1 hour after market open.
+    algo.schedule_function(
+        rebalance,
+        algo.date_rules.every_day(),
+        algo.time_rules.market_open(hours=1),
+    )
+
+    # Record tracking variables at the end of each day.
+    algo.schedule_function(
+        record_vars,
+        algo.date_rules.every_day(),
+        algo.time_rules.market_close(),
+    )
+
+    # Create our dynamic stock selector.
+    algo.attach_pipeline(pipe_definition(context), 'pipeline')
+
+def pipe_definition(context): 
+    factor1 = Fundamentals.ev_to_ebitda.latest
+    factor2 = Fundamentals.growth_score.latest
+    factor3 = sentiment.sentiment_signal.latest
+    universe = (Q1500US() & factor1.notnull() & factor2.notnull() & factor3.notnull())
+    
+    #minimum_market_cap=25000000000 (Can be used to filter Q1500US)
+    
+    #rank according to the average value of the stock fundamentals in the cross section
+    factor1 = factor1.rank(mask=universe, method = 'average')
+    factor2 = factor2.rank(mask=universe, method = 'average')
+    factor3 = factor3.rank(mask=universe, method = 'average')
+    
+    combined_alpha = factor1 + factor2 + factor3     
+
+    return Pipeline(
+            columns = {
+            'calpha' : combined_alpha, 
+            'sector': Sector()
+            },
+            screen = universe,
+            )
+def before_trading_start(context, data):
+    """
+    Called every day before market open.
+    """
+    context.output = algo.pipeline_output('pipeline')
+
+    #These are the securities that we are interested in trading each day.
+    context.security_list = context.output.index
+
+def rebalance(context, data):
+     
+    pipeline_data = context.output
+    #We want to maximize the returns of our model
+    objective = opt.MaximizeAlpha(pipeline_data.calpha) 
+    constrain_gross_leverage = opt.MaxGrossExposure(gross_leverage_max)
+    constrain_pos_size = opt.PositionConcentration.with_equal_bounds(
+        -min_weight,
+        max_weight,
+    )
+    market_neutral = opt.DollarNeutral()
+    #Minimum and maximum sector exposure kept according to the bounds suggested by quantopian contest entry requirements
+    sector_neutral = opt.NetGroupExposure.with_equal_bounds(
+        labels=pipeline_data.sector,
+        min=-0.19,
+        max=0.19,
+    )
+
+    #Run the optimization. This will calculate new portfolio weights and
+    #manage moving our portfolio toward the target.
+    algo.order_optimal_portfolio(
+        objective=objective,
+        constraints=[
+            constrain_gross_leverage,
+            constrain_pos_size,
+            market_neutral,
+            sector_neutral])
+    
+def record_vars(context, data):
+     record(leverage=context.account.leverage,
+           positions=len(context.portfolio.positions))
