@@ -1,0 +1,189 @@
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+import math
+import pandas_datareader.data as web
+import datetime as dt
+from pandas.tseries.offsets import BDay
+import xlsxwriter
+
+start_date_1y = dt.datetime(2018, 11, 30)  # set it as the last day of the month before start month
+start_date_1y = start_date_1y + BDay(1) - BDay(1)  # to avoid the start day not being a business day
+start_date_3y = dt.datetime(2016, 11, 30)
+start_date_3y = start_date_3y + BDay(1) - BDay(1)
+end_date = dt.datetime(2019, 11, 30)
+end_date = end_date + BDay(1)  # extend one business day for Corwin and Schultz estimation
+
+
+def get_data(ticker, start, end):
+    data = web.DataReader(ticker, 'yahoo', start, end)
+    data['Month'] = data.index.year.astype(str) + '-' + data.index.strftime('%m').astype(str)  # mark month and year
+    data['Daily_Return'] = data['Adj Close'] / data['Adj Close'].shift(1) - 1  # calculate daily return
+    data['$Volume'] = (data['High'] + data['Low']) / 2 * data['Volume']  # calculate dollar daily volume
+    data.dropna(inplace=True)
+    return data
+
+
+def roll(data):
+    # use the output of function get_data as input here
+    data = data[:-1].copy()  # drop the additional day at the end
+    df = data.groupby(['Month'])
+
+    def lag_cov(series, lag):
+        res = series[lag:].cov(series[:-lag])
+        return res
+
+    estimator = 2 * abs(df['Daily_Return'].apply(lag_cov, 1)).apply(math.sqrt)  # lag 1 covariance
+    return estimator
+
+
+def amihud(data):
+    # use the output of function get_data as input here
+    data = data[:-1].copy()  # drop the additional day at the end
+    data['r/V'] = abs(data['Daily_Return']) / data['$Volume']
+    df = data.groupby(['Month'])
+    estimator = df['r/V'].mean()
+    return estimator
+
+
+def corwin_schultz(data):
+    # use the output of function get_data as input here
+    data = data.copy()
+    data['ln(H/L)'] = (data['High'] / data['Low']).apply(math.log)  # log of High/Low
+    data['Beta'] = data['ln(H/L)'] ** 2 + data['ln(H/L)'].shift(-1) ** 2
+    data['High(t+1)'] = data['High'].shift(-1)
+    data['Low(t+1)'] = data['Low'].shift(-1)
+    data['High(2d)'] = data[['High', 'High(t+1)']].max(axis=1)  # highest price between t and t+1
+    data['Low(2d)'] = data[['Low', 'Low(t+1)']].max(axis=1)  # lowest price between t and t+1
+    data['Gamma'] = (data['High(2d)'] / data['Low(2d)']).apply(math.log) ** 2
+    data = data[:-1]  # drop the additional day at the end before calculating the estimates
+    beta = (data.groupby(['Month']))['Beta'].mean()  # expectation of Beta
+    gamma = (data.groupby(['Month']))['Gamma'].mean()  # expectation of gamma
+    alpha = ((2 * beta).apply(math.sqrt) - beta.apply(math.sqrt)) / (3 - 2 * math.sqrt(2)) - \
+            (gamma / (3 - 2 * math.sqrt(2))).apply(math.sqrt)
+    estimator = 2 * (alpha.apply(math.exp) - 1) / (1 + alpha.apply(math.exp))
+    return estimator
+
+
+def explanatory_v(data):  # explanatory variables
+    # use the output of function get_data as input here
+    # calculate inverse of ave.price, log of ave.volume and daily vol here
+    data = data[:-1].copy()  # drop the additional day at the end
+    df = (data.groupby(['Month']))[['Adj Close', '$Volume']].mean()  # calculate the average price and volume
+    df['Variance'] = (data.groupby(['Month']))['Adj Close'].apply(np.var)  # monthly variance
+    df['N of days'] = (data.groupby(['Month']))['Adj Close'].count()  # number of trading days of the month
+    output = pd.DataFrame()
+    output['Inverse_Price'] = df['Adj Close'] ** -1  # inverse of average price
+    output['log_$Volume'] = df['$Volume'].apply(math.log)  # log of average dollar volume
+    output['Daily_Vol'] = (df['Variance'] / df['N of days']).apply(math.sqrt)  # daily vol = sqrt(month var / days)
+    return output
+
+
+def regressions(ticker, x_variables, period):
+    # run three regressions for three different estimators
+    # idea is to output the parameter coefficients, their p-values, as well as the R-squared of the regression
+
+    if period == '3y':
+        data = get_data(ticker, start_date_3y, end_date)
+    else:
+        data = get_data(ticker, start_date_1y, end_date)
+
+    df = explanatory_v(data)  # x-variables
+    df['Roll'] = roll(data)  # y-variable for regression of Roll's estimator
+    df['Amihud'] = amihud(data)  # y-variable for regression of Amihud's estimator
+    df['Corwin & Schultz'] = corwin_schultz(data)  # y-variable for regression of Corwin & Schultz's estimator
+
+    def regression(y, x):
+        model = sm.OLS(df[y],
+                       sm.add_constant(df[x])).fit()  # add constant here
+        output = pd.concat([model.params, model.pvalues], axis=1).T
+        index = [np.array([ticker, ticker]), np.array(['Parameters', 'P-values'])]  # create a multi-index
+        output.index = index
+        output.loc[(ticker, 'Parameters'), 'F_stats'] = model.fvalue
+        output.loc[(ticker, 'P-values'), 'F_stats'] = model.f_pvalue
+        output.loc[(ticker, 'Parameters'), 'R_squared'] = model.rsquared
+        return output
+
+    output_roll = regression('Roll', x_variables)
+    output_amihud = regression('Amihud', x_variables)
+    output_cs = regression('Corwin & Schultz', x_variables)
+
+    return output_roll, output_amihud, output_cs
+
+
+def group_summary(tickers, group_name, x_variables):
+    # just to combine the results of each stock into one DataFrame
+    group_output_roll_1y = pd.DataFrame()
+    group_output_amihud_1y = pd.DataFrame()
+    group_output_cs_1y = pd.DataFrame()
+
+    group_output_roll_3y = pd.DataFrame()
+    group_output_amihud_3y = pd.DataFrame()
+    group_output_cs_3y = pd.DataFrame()
+
+    for ticker in tickers:
+        temp_1y = regressions(ticker, x_variables, '1y')
+        group_output_roll_1y = pd.concat([group_output_roll_1y, temp_1y[0]])
+        group_output_amihud_1y = pd.concat([group_output_amihud_1y, temp_1y[1]])
+        group_output_cs_1y = pd.concat([group_output_cs_1y, temp_1y[2]])
+
+        temp_3y = regressions(ticker, x_variables, '3y')
+        group_output_roll_3y = pd.concat([group_output_roll_3y, temp_3y[0]])
+        group_output_amihud_3y = pd.concat([group_output_amihud_3y, temp_3y[1]])
+        group_output_cs_3y = pd.concat([group_output_cs_3y, temp_3y[2]])
+
+    group_output_roll_1y = pd.concat([group_output_roll_1y], keys=group_name)
+    group_output_amihud_1y = pd.concat([group_output_amihud_1y], keys=group_name)
+    group_output_cs_1y = pd.concat([group_output_cs_1y], keys=group_name)
+
+    group_output_roll_3y = pd.concat([group_output_roll_3y], keys=group_name)
+    group_output_amihud_3y = pd.concat([group_output_amihud_3y], keys=group_name)
+    group_output_cs_3y = pd.concat([group_output_cs_3y], keys=group_name)
+
+    return group_output_roll_1y, group_output_amihud_1y, group_output_cs_1y, \
+           group_output_roll_3y, group_output_amihud_3y, group_output_cs_3y
+
+
+def generate_outputs(model_x_variables, file_name):
+    res_large_cap = group_summary(large_cap, 'Large Cap', model_x_variables)
+    res_mid_cap = group_summary(mid_cap, 'Mid Cap', model_x_variables)
+    res_small_cap = group_summary(small_cap, 'Small Cap', model_x_variables)
+
+    roll_summary_1y = pd.concat([res_large_cap[0], res_mid_cap[0], res_small_cap[0]])
+    amihud_summary_1y = pd.concat([res_large_cap[1], res_mid_cap[1], res_small_cap[1]])
+    cs_summary_1y = pd.concat([res_large_cap[2], res_mid_cap[2], res_small_cap[2]])
+
+    roll_summary_3y = pd.concat([res_large_cap[3], res_mid_cap[3], res_small_cap[3]])
+    amihud_summary_3y = pd.concat([res_large_cap[4], res_mid_cap[4], res_small_cap[4]])
+    cs_summary_3y = pd.concat([res_large_cap[5], res_mid_cap[5], res_small_cap[5]])
+
+    writer = pd.ExcelWriter(file_name, engine='xlsxwriter')
+
+    roll_summary_1y.to_excel(writer, sheet_name='Roll 1Y')
+    amihud_summary_1y.to_excel(writer, sheet_name='Amihud 1Y')
+    cs_summary_1y.to_excel(writer, sheet_name='Corwin & Schultz 1Y')
+
+    roll_summary_3y.to_excel(writer, sheet_name='Roll 3Y')
+    amihud_summary_3y.to_excel(writer, sheet_name='Amihud 3Y')
+    cs_summary_3y.to_excel(writer, sheet_name='Corwin & Schultz 3Y')
+
+    writer.save()
+
+
+small_cap = ['ARWR', 'MDCO', 'LHCG', 'DAR', 'CCMP', 'BLD', 'GBCI', 'RLI', 'LAD', 'CBU']
+mid_cap = ['ZBRA', 'STE', 'TDY', 'ODFL', 'DPZ', 'Y', 'TYL', 'WST', 'CPT', 'TER']
+large_cap = ['MSFT', 'AAPL', 'AMZN', 'GOOGL', 'FB', 'JPM', 'JNJ', 'WMT', 'V', 'BAC']
+
+###################################################################################################
+# the following codes to generate the outputs
+###################################################################################################
+
+# generate_outputs(['Inverse_Price', 'log_$Volume', 'Daily_Vol'], '3_factor.xlsx')
+# generate_outputs(['Inverse_Price', 'log_$Volume'], '2_factor (price & volume.xlsx')
+# generate_outputs(['Inverse_Price', 'Daily_Vol'], '2_factor (price & volatility).xlsx')
+# generate_outputs(['log_$Volume', 'Daily_Vol'], '2_factor (volume & volatility).xlsx')
+# generate_outputs(['Inverse_Price'], '1_factor (price).xlsx')
+# generate_outputs(['log_$Volume'], '1_factor (volume).xlsx')
+# generate_outputs(['Daily_Vol'], '1_factor (volatility).xlsx')
+
+
